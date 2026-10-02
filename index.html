@@ -114,6 +114,36 @@ function rosterText(db, day) {
   return out.join('\n');
 }
 
+// The roster as a PDF, written by hand so the page needs no library: Letter pages, Helvetica,
+// same lines as rosterText (title, then bold class headings, then indented names).
+// ponytail: Latin-1 text only; a name in another script prints as "?". Embed a font if that matters.
+function pdfText(text) {
+  const esc = (s) => s.replace(/[^\x20-\xff]/g, '?').replace(/[\\()]/g, '\\$&');
+  const pages = [[]];
+  let y = 730;
+  text.split('\n').forEach((ln, i) => {
+    const head = i === 0 || (i > 2 && /^\S/.test(ln));
+    const size = i === 0 ? 22 : head ? 15 : 12;
+    if (y < 60) { pages.push([]); y = 730; }
+    if (ln) pages[pages.length - 1].push('BT /' + (head ? 'F2' : 'F1') + ' ' + size + ' Tf 56 ' + y + ' Td (' + esc(ln) + ') Tj ET');
+    y -= size * 1.5;
+  });
+  const font = (n) => '<< /Type /Font /Subtype /Type1 /BaseFont /' + n + ' /Encoding /WinAnsiEncoding >>';
+  const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '', font('Helvetica'), font('Helvetica-Bold')];
+  const kids = pages.map((ops) => {
+    const body = ops.join('\n');
+    objs.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ' + (objs.length + 2) + ' 0 R >>');
+    objs.push('<< /Length ' + body.length + ' >>\nstream\n' + body + '\nendstream');
+    return (objs.length - 1) + ' 0 R';
+  });
+  objs[1] = '<< /Type /Pages /Kids [' + kids.join(' ') + '] /Count ' + kids.length + ' >>';
+  let out = '%PDF-1.4\n';
+  const at = objs.map((o, i) => { const off = out.length; out += (i + 1) + ' 0 obj\n' + o + '\nendobj\n'; return off; });
+  const xref = out.length;
+  out += 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n' + at.map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('');
+  return out + 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+}
+
 // One row per student per class, so a pivot table can count either way.
 function csvText(db, from, to) {
   // Names are typed by students: quote them, and defuse spreadsheet formulas.
@@ -271,11 +301,12 @@ function coachGate() {
   coach(dayOf(new Date()));
 }
 
-async function share(data, fallback) {
+// Hands a file to the iPad share sheet (AirDrop, Mail, Messages); downloads it where there is none.
+async function shareFile(file) {
   try {
-    if (navigator.canShare && navigator.canShare(data)) return await navigator.share(data);
+    if (navigator.canShare && navigator.canShare({ files: [file] })) return await navigator.share({ files: [file] });
   } catch (e) { if (e.name === 'AbortError') return; }
-  fallback();
+  el('a', { href: URL.createObjectURL(file), download: file.name }).click();
 }
 
 function coach(day) {
@@ -292,20 +323,18 @@ function coach(day) {
 
     el('section', {}, el('h3', {}, 'Roster'),
       el('div', { className: 'row' }, dayIn,
-        btn('Share this list', 'go', () => share({ text }, () => {
-          navigator.clipboard.writeText(text).then(() => alert('Copied. Paste it into a text or email.'));
-        }))),
+        btn('Share PDF', 'go', () => {
+          // One character is one byte in pdfText's output, which is what its offsets assume.
+          const bytes = Uint8Array.from(pdfText(text), (ch) => ch.charCodeAt(0));
+          shareFile(new File([bytes], 'asylum-attendance-' + day + '.pdf', { type: 'application/pdf' }));
+        })),
       el('pre', {}, text)),
 
     el('section', {}, el('h3', {}, 'Spreadsheet'),
       el('div', { className: 'row' }, from, 'to', to,
         btn('Share spreadsheet', '', () => {
           const name = 'asylum-attendance-' + from.value + '-to-' + to.value + '.csv';
-          const file = new File([csvText(db, from.value, to.value)], name, { type: 'text/csv' });
-          share({ files: [file] }, () => {
-            const a = el('a', { href: URL.createObjectURL(file), download: name });
-            a.click();
-          });
+          shareFile(new File([csvText(db, from.value, to.value)], name, { type: 'text/csv' }));
         }))),
 
     el('section', {}, el('h3', {}, 'Classes'),
