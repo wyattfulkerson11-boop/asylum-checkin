@@ -49,6 +49,8 @@
   section h3 { margin:0 0 12px; font-size:22px; color:var(--go); text-transform:uppercase; letter-spacing:.05em; }
   .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
   .row .grow { flex:1; min-width:200px; }
+  body.bright { background:#35c46f; color:#06200f; }
+  body.bright .tick, body.bright .sub { color:#06200f; }
   .warn { background:#5a1d1d; border-radius:14px; padding:14px 18px; margin-bottom:18px; }
 </style>
 </head>
@@ -57,7 +59,7 @@
 <script>
 // Pure functions; checkin/test.mjs runs everything between the next two markers.
 // --- logic ---
-const DEFAULT_CLASSES = ['Brazilian Jiu-Jitsu', 'Kickboxing', 'MMA', 'Wrestling'];
+const DEFAULT_CLASSES = ['Adult Jiu-Jitsu', 'Kids Jiu-Jitsu', 'MMA', 'Muay-Thai/Kickboxing', 'Saturday Competition Class'];
 const pad = (n) => String(n).padStart(2, '0');
 // Local date, not UTC: a 7pm class in Owensboro must not land on tomorrow's roster.
 const dayOf = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
@@ -65,7 +67,7 @@ const timeOf = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
 const cleanName = (s) => s.trim().replace(/\s+/g, ' ');
 
 function fresh() {
-  return { v: 1, pin: null, nextId: 1, classes: DEFAULT_CLASSES.slice(), students: {}, checkins: [] };
+  return { v: 1, nextId: 1, classes: DEFAULT_CLASSES.slice(), students: {}, checkins: [] };
 }
 
 // Returns the student's id. A name already on file (any capitalisation) is reused,
@@ -125,6 +127,7 @@ function csvText(db, from, to) {
 // --- ui ---
 
 const KEY = 'asylum.checkin.v1';
+const COACH_PIN = '0000'; // placeholder; the repo is public, so this is a speed bump, not a secret
 let corrupt = false;
 // ponytail: all history in one localStorage key (~5 MB cap). At ~60 bytes a check-in that is
 // years of classes for 100 students; move to IndexedDB or prune old years if it ever fills.
@@ -159,10 +162,15 @@ function el(tag, props, ...kids) {
 const btn = (label, cls, onclick) => el('button', { className: cls || '', onclick }, label);
 function show(...nodes) {
   clearTimeout(timer);
+  document.body.className = '';
   app.replaceChildren(...nodes.filter((n) => n != null));
   window.scrollTo(0, 0);
 }
-const after = (ms, fn) => { clearTimeout(timer); timer = setTimeout(fn, ms); };
+// Idle timeout for the current screen; any tap or keystroke starts it over.
+let rearm = null;
+const after = (ms, fn) => { rearm = () => { clearTimeout(timer); timer = setTimeout(fn, ms); }; rearm(); };
+for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => rearm && rearm(), true);
+const IDLE = 30000;
 const active = () => Object.keys(db.students).filter((id) => !db.students[id].gone)
   .sort((a, b) => db.students[a].name.localeCompare(db.students[b].name));
 const names = (ids) => ids.map((id) => db.students[id].name).join(', ');
@@ -198,7 +206,8 @@ function home() {
       multi ? btn('Check in ' + sel.size, 'go', () => pick([...sel])) : null,
       btn('Coach', 'small push', coachGate)));
   if (multi) app.querySelector('.go').disabled = !sel.size;
-  if (multi || letter) after(60000, reset);
+  rearm = null;
+  if (multi || letter) after(IDLE, reset);
 }
 function reset() { multi = false; sel.clear(); letter = null; home(); }
 
@@ -218,7 +227,7 @@ function newStudent() {
     input,
     el('div', { className: 'row' }, btn('Cancel', '', home), go)));
   input.focus();
-  after(90000, reset);
+  after(IDLE, reset);
 }
 
 function pick(ids) {
@@ -241,30 +250,24 @@ function pick(ids) {
     el('p', { className: 'sub' }, 'What are you here for today? Tap every class.'),
     grid,
     el('div', { className: 'bar' }, btn('Not me', '', reset), el('span', { className: 'push' }), go));
-  after(45000, reset);
+  after(IDLE, reset);
 }
 
 function finish(ids, classes) {
-  const before = JSON.stringify(db.checkins);
   checkIn(db, ids, classes, new Date());
   save();
   show(el('div', { className: 'center' },
     el('div', { className: 'tick' }, '✓'),
     el('h2', {}, "You're checked in"),
     el('p', {}, names(ids)),
-    el('p', { className: 'sub' }, classes.join(' · ')),
-    el('div', { className: 'row' },
-      btn('Undo', '', () => { db.checkins = JSON.parse(before); save(); reset(); }),
-      btn('Done', 'go', reset))));
-  after(5000, reset);
+    el('p', { className: 'sub' }, classes.join(' · '))));
+  document.body.className = 'bright';
+  rearm = null;
+  timer = setTimeout(reset, 5000);
 }
 
 function coachGate() {
-  if (!db.pin) {
-    const p = prompt('Coach: choose a 4-digit PIN for this screen.');
-    if (!/^\d{4}$/.test(p || '')) return;
-    db.pin = p; save();
-  } else if (prompt('Coach PIN') !== db.pin) return;
+  if (prompt('Coach PIN') !== COACH_PIN) return;
   coach(dayOf(new Date()));
 }
 
@@ -324,7 +327,7 @@ function coach(day) {
           if (!confirm('Remove ' + db.students[id].name + ' from the check-in screen? Past attendance is kept.')) return;
           db.students[id].gone = true; save(); coach(day);
         })))));
-  after(300000, reset);
+  after(120000, reset);
 }
 
 home();
