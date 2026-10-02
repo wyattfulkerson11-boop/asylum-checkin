@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>iPad Guide — Asylum Check-In</title>
+<style>
+  /* Setting up and running the check-in iPad, for whoever at the gym is doing it.
+     Cmd+P → Print. Nothing here is loaded by the app. The coach PIN is deliberately
+     NOT in this file — the repo is public. */
+  @page { size: letter portrait; margin: 0.6in; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    color: #111; font-size: 15px; line-height: 1.5;
+    max-width: 7.2in; margin: 0 auto; padding: 24px 16px;
+  }
+  header { text-align: center; margin-bottom: 16px; }
+  header img { width: 1.3in; height: auto; border-radius: 50%; }
+  h1 { font-size: 30px; margin: 8px 0 4px; }
+  h2 {
+    font-size: 21px; margin: 24px 0 8px; padding-bottom: 4px;
+    border-bottom: 3px solid #c8102e; break-after: avoid;
+  }
+  p, li { margin: 4px 0; }
+  ol, ul { padding-left: 24px; }
+  li { break-inside: avoid; }
+  b.btn {
+    display: inline-block; border: 1.5px solid #111; border-radius: 5px;
+    padding: 0 6px; font-size: 13px; white-space: nowrap;
+  }
+  .path { font-family: ui-monospace, Menlo, monospace; font-size: 13.5px; }
+  .url {
+    font-family: ui-monospace, Menlo, monospace; font-size: 15px; font-weight: 600;
+    border: 2px solid #111; border-radius: 8px; padding: 10px; margin: 8px 0;
+    text-align: center; word-break: break-all;
+  }
+  .rule {
+    border-left: 6px solid #c8102e; background: #f2f2f2;
+    padding: 8px 12px; margin: 12px 0; break-inside: avoid;
+  }
+  .page { break-before: page; }
+  .screen-only { text-align: center; font-size: 13px; color: #666; }
+  @media print { .screen-only { display: none; } }
+</style>
+</head>
+<body>
+
+<p class="screen-only">Press Cmd+P and print.</p>
+
+<header>
+  <img src="logo.jpg" alt="Asylum Martial Arts">
+  <h1>Class Check-In iPad</h1>
+  <p>Setup takes about <b>10 minutes</b>, once. After that students just tap their name.</p>
+</header>
+
+<h2>Set up the iPad (once)</h2>
+<ol>
+  <li>Connect to the gym Wi-Fi. Open <b>Safari</b> (the blue compass, <b>not Chrome</b>) and type this address exactly:
+    <div class="url">wyattfulkerson11-boop.github.io/asylum-checkin/</div>
+    You should see the Asylum logo and <b>"Asylum Martial Arts."</b></li>
+  <li>Tap the <b>Share</b> button (square with an arrow pointing up) → <b class="btn">Add to Home Screen</b> → name it <b>Check In</b> → <b class="btn">Add</b>.</li>
+  <li>Close Safari. Tap the new <b>Check In</b> icon and leave it open for a minute on Wi-Fi. That lets it save itself so it still opens if the Wi-Fi drops.</li>
+  <li><span class="path">Settings → Display &amp; Brightness → Auto-Lock → Never</span>, and leave the iPad plugged in.</li>
+  <li>Optional, to stop kids leaving the app: <span class="path">Settings → Accessibility → Guided Access</span> → On, set a passcode. Open <b>Check In</b>, triple-click the top button → <b class="btn">Start</b>. Triple-click again and enter the passcode to get out.</li>
+</ol>
+<div class="rule"><b>Only ever open it from the Check In icon.</b> Safari and the icon keep separate lists — names added in Safari won't show up in the icon.</div>
+
+<div class="page"></div>
+<h2>Students</h2>
+<ul>
+  <li><b>First time:</b> tap <b class="btn">I'm new</b>, type first and last name, <b class="btn">Save</b>. Only once — after that the name is a button.</li>
+  <li><b>Every class:</b> tap your name → tap every class you're here for → <b class="btn">Check in</b>. It remembers last time's classes, so a regular is two taps.</li>
+  <li><b>Parent with several kids:</b> tap <b class="btn">Several kids</b>, tap each name, then <b class="btn">Check in</b>.</li>
+  <li><b>Wrong name?</b> Tap <b class="btn">Not me</b>. A name with a ✓ has already checked in today; checking in again just adds classes.</li>
+</ul>
+
+<h2>Coaches</h2>
+<p>Tap <b class="btn">Coach</b> (bottom right) and type the coach PIN. Get the PIN from Wyatt — it's never written down here. The coach screen goes back to check-in on its own after 2 minutes.</p>
+<ul>
+  <li><b>Roster:</b> pick a day → <b class="btn">Share PDF</b> → AirDrop, Mail, Messages or Print. Grouped by class.</li>
+  <li><b>Spreadsheet:</b> pick a from and to date → <b class="btn">Share spreadsheet</b>. Opens in Excel or Numbers.</li>
+  <li><b>Classes:</b> one class per line → <b class="btn">Save classes</b>. These are the buttons students see.</li>
+  <li><b>Students:</b> <b class="btn">Rename</b> fixes a typo. <b class="btn">Remove</b> takes a name off the check-in screen; past attendance is kept.</li>
+</ul>
+
+<h2>Good to know</h2>
+<div class="rule"><b>Names and attendance live on this iPad only.</b> There is no copy anywhere else. Share the spreadsheet to yourself once a month as a backup.</div>
+<ul>
+  <li><b>Don't delete the Check In icon</b> and don't erase the iPad — that erases the names and attendance with it.</li>
+  <li>It works without Wi-Fi. Sharing a PDF by Mail or Messages needs Wi-Fi; printing and AirDrop don't need the internet.</li>
+  <li>If it ever says <b>"Saved data could not be read"</b>, or anything else looks wrong, stop and tell Wyatt.</li>
+</ul>
+
+</body>
+</html>
