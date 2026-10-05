@@ -35,6 +35,7 @@
   .grid button { text-align:left; font-size:22px; font-weight:600; overflow-wrap:anywhere; padding:10px 18px; }
   .grid button.in { border-color:var(--gold); }
   .grid button.in::after { content:" ✓"; color:var(--gold); }
+  .classes button.done { border-color:var(--gold); color:var(--gold); opacity:.6; }
   .classes { grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); flex:none; }
   .classes button { min-height:96px; font-size:26px; text-align:center; }
   .bar { position:sticky; bottom:0; display:flex; gap:12px; flex-wrap:wrap; align-items:center; background:var(--bg);
@@ -70,7 +71,7 @@ const pad = (n) => String(n).padStart(2, '0');
 // Local date, not UTC: a 7pm class in Owensboro must not land on tomorrow's roster.
 const dayOf = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 const timeOf = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
-// '18:05' -> '6:05 PM' for people; the stored and CSV time stays 24-hour so it sorts.
+// '18:05' -> '6:05 PM' for people; the stored time stays 24-hour so it sorts.
 const clock = (t) => ((+t.slice(0, 2) % 12) || 12) + t.slice(2) + (+t.slice(0, 2) < 12 ? ' AM' : ' PM');
 const cleanName = (s) => s.trim().replace(/\s+/g, ' ');
 
@@ -91,40 +92,47 @@ function addStudent(db, rawName) {
   return id;
 }
 
-// A student counts once per class per day (no class runs twice a day). A second check-in the same
-// day adds its new classes to that day's record, or to a new record if that one was already pulled:
-// a pulled record never changes, so the iPad always agrees with the file that was shared.
+// Each check-in is its own record with its own time, so a morning class and an evening class
+// show their real times. It holds only classes the student isn't already in today (no class runs
+// twice a day). Earlier records never change, so a pulled file always matches the iPad.
 function checkIn(db, ids, classes, now) {
   const d = dayOf(now);
   for (const s of ids) {
     const today = db.checkins.filter((x) => x.s === s && x.d === d);
     const had = new Set(today.flatMap((x) => x.c));
     const add = classes.filter((c) => !had.has(c));
-    let r = today.find((x) => !x.p);
-    if (!r && (add.length || !today.length)) { r = { s, d, t: timeOf(now), c: [] }; db.checkins.push(r); }
-    if (r) r.c.push(...add);
+    if (add.length || !today.length) db.checkins.push({ s, d, t: timeOf(now), c: add });
     db.students[s].last = classes.slice();
   }
 }
+// The name screen's ✓ covers one half of the day, so an evening student isn't shown as already in.
+const half = (t) => (t < '12:00' ? 'AM' : 'PM');
 
 const rowsOf = (db, recs) => recs
   .map((r) => ({ s: r.s, d: r.d, t: r.t, name: db.students[r.s].name, c: r.c }))
   .sort((a, b) => (a.d + a.t + a.name).localeCompare(b.d + b.t + b.name));
-const rowsBetween = (db, from, to) => rowsOf(db, db.checkins.filter((r) => r.d >= from && r.d <= to));
 
-// A day's attendance: every class that had someone, in the coach's class order.
-function rosterData(db, day) {
-  const rs = rowsBetween(db, day, day);
-  const names = db.classes.slice();
-  for (const r of rs) for (const c of r.c) if (!names.includes(c)) names.push(c);
-  const groups = names.map((g) => ({ name: g, who: rs.filter((r) => r.c.includes(g)) }));
-  groups.push({ name: 'No class picked', who: rs.filter((r) => !r.c.length) });
-  return {
-    date: new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
-    total: new Set(rs.map((r) => r.s)).size,
-    groups: groups.filter((g) => g.who.length),
-  };
+const longDate = (day) => new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+// 'Monday, October 5, 2026' for one day, 'Sep 28 to Oct 5, 2026' for a range (Latin-1, for the PDF).
+function rangeTitle(from, to) {
+  if (from === to) return longDate(from);
+  const md = (d) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return md(from) + (from.slice(0, 4) === to.slice(0, 4) ? '' : ', ' + from.slice(0, 4)) + ' to ' + md(to) + ', ' + to.slice(0, 4);
 }
+
+// Attendance by day, then by class: every class that had someone, in the coach's class order.
+function reportData(db, recs) {
+  const rows = rowsOf(db, recs);
+  return [...new Set(rows.map((r) => r.d))].sort().map((day) => {
+    const rs = rows.filter((r) => r.d === day);
+    const names = db.classes.slice();
+    for (const r of rs) for (const c of r.c) if (!names.includes(c)) names.push(c);
+    const groups = names.map((g) => ({ name: g, who: rs.filter((r) => r.c.includes(g)) }));
+    groups.push({ name: 'No class picked', who: rs.filter((r) => !r.c.length) });
+    return { day, date: longDate(day), total: new Set(rs.map((r) => r.s)).size, groups: groups.filter((g) => g.who.length) };
+  });
+}
+const rosterData = (db, day) => reportData(db, db.checkins.filter((r) => r.d === day))[0] || { date: longDate(day), total: 0, groups: [] };
 
 function rosterText(db, day) {
   const r = rosterData(db, day);
@@ -137,8 +145,12 @@ function rosterText(db, day) {
 // Helvetica, black on white with grey class bands. `logo` is a 240x240 JPEG as a binary string
 // (one char per byte), drawn clipped to a circle; leave it out and the header is text only.
 // ponytail: Latin-1 text only; a name in another script prints as "?". Embed a font if that matters.
-function pdfRoster(db, day, logo) {
-  const r = rosterData(db, day);
+// `recs` are the check-ins to print and `title` the date line: one day prints like a sign-in sheet,
+// several days get a heading per day. The big number is check-ins (one per student per day).
+function pdfRoster(db, recs, title, logo) {
+  const days = reportData(db, recs);
+  const one = days.length <= 1;
+  const total = days.reduce((n, d) => n + d.total, 0);
   const esc = (s) => String(s).replace(/[^\x20-\xff]/g, '?').replace(/[\\()]/g, '\\$&');
   const T = (f, size, x, y, s, grey) => (grey ? grey + ' g ' : '') + 'BT /' + f + ' ' + size + ' Tf ' + x + ' ' + y + ' Td (' + esc(s) + ') Tj ET' + (grey ? ' 0 g' : '');
   // Helvetica digits are all 556 wide, so counts and times can be right-aligned from this short table.
@@ -159,29 +171,39 @@ function pdfRoster(db, day, logo) {
           + ' W n 64 0 0 64 ' + L + ' 672 cm /Im1 Do Q');
       }
       const x = logo ? L + 80 : L;
-      ops.push(T('F2', 20, x, 716, 'ASYLUM MARTIAL ARTS'), T('F1', 12, x, 697, 'Class attendance', 0.4), T('F1', 12, x, 679, r.date));
-      ops.push(T('F2', 30, R - numW(r.total, 30), 698, r.total), T('F1', 10, R - 47.8, 682, 'checked in', 0.4));
+      ops.push(T('F2', 20, x, 716, 'ASYLUM MARTIAL ARTS'), T('F1', 12, x, 697, 'Class attendance', 0.4), T('F1', 12, x, 679, title));
+      // 47.8 and 42.2: Helvetica 10pt widths of the two labels.
+      ops.push(T('F2', 30, R - numW(total, 30), 698, total), T('F1', 10, R - (one ? 47.8 : 42.2), 682, one ? 'checked in' : 'check-ins', 0.4));
       ops.push('1.5 w ' + L + ' 660 m ' + R + ' 660 l S');
       y = 636;
     } else {
-      ops.push(T('F2', 10, L, 742, 'ASYLUM MARTIAL ARTS'), T('F1', 10, L + 130, 742, r.date, 0.4), '1 w ' + L + ' 734 m ' + R + ' 734 l S');
+      ops.push(T('F2', 10, L, 742, 'ASYLUM MARTIAL ARTS'), T('F1', 10, L + 130, 742, title, 0.4), '1 w ' + L + ' 734 m ' + R + ' 734 l S');
       y = 712;
     }
   };
   newPage();
-  if (!r.groups.length) ops.push(T('F1', 12, L, y - 14, 'Nobody checked in.', 0.4));
-  for (const g of r.groups) {
-    if (y - 42 < BOTTOM) newPage(); // a heading never sits alone at the foot of a page
-    ops.push('0.9 g ' + L + ' ' + (y - 22) + ' ' + (R - L) + ' 22 re f 0 g',
-      T('F2', 13, L + 8, y - 16, g.name), T('F2', 13, R - 8 - numW(g.who.length, 13), y - 16, g.who.length));
-    y -= 22;
-    for (const w of g.who) {
-      if (y - 20 < BOTTOM) newPage();
-      ops.push(T('F1', 12, L + 8, y - 14, w.name), T('F1', 12, R - 8 - numW(clock(w.t), 12), y - 14, clock(w.t), 0.4),
-        '0.8 G 0.5 w ' + L + ' ' + (y - 20) + ' m ' + R + ' ' + (y - 20) + ' l S 0 G');
-      y -= 20;
+  if (!days.length) ops.push(T('F1', 12, L, y - 14, 'Nobody checked in.', 0.4));
+  for (const d of days) {
+    if (!one) {
+      if (y - 84 < BOTTOM) newPage(); // a day heading never sits alone at the foot of a page
+      ops.push(T('F2', 15, L, y - 18, d.date), T('F2', 15, R - numW(d.total, 15), y - 18, d.total),
+        '1 w ' + L + ' ' + (y - 26) + ' m ' + R + ' ' + (y - 26) + ' l S');
+      y -= 36;
     }
-    y -= 14;
+    for (const g of d.groups) {
+      if (y - 42 < BOTTOM) newPage(); // nor a class heading
+      ops.push('0.9 g ' + L + ' ' + (y - 22) + ' ' + (R - L) + ' 22 re f 0 g',
+        T('F2', 13, L + 8, y - 16, g.name), T('F2', 13, R - 8 - numW(g.who.length, 13), y - 16, g.who.length));
+      y -= 22;
+      for (const w of g.who) {
+        if (y - 20 < BOTTOM) newPage();
+        ops.push(T('F1', 12, L + 8, y - 14, w.name), T('F1', 12, R - 8 - numW(clock(w.t), 12), y - 14, clock(w.t), 0.4),
+          '0.8 G 0.5 w ' + L + ' ' + (y - 20) + ' m ' + R + ' ' + (y - 20) + ' l S 0 G');
+        y -= 20;
+      }
+      y -= 14;
+    }
+    if (!one) y -= 10;
   }
   pages.forEach((p, i) => p.push(T('F1', 9, L, 40, 'Page ' + (i + 1) + ' of ' + pages.length, 0.4)));
 
@@ -203,18 +225,6 @@ function pdfRoster(db, day, logo) {
   return out + 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
 }
 
-// One row per student per class, so a pivot table can count either way.
-function csvOf(db, recs) {
-  // Names are typed by students: quote them, and defuse spreadsheet formulas.
-  const q = (s) => '"' + String(s).replace(/^[=+\-@]/, "'$&").replace(/"/g, '""') + '"';
-  const lines = ['Date,Time,Name,Class'];
-  for (const r of rowsOf(db, recs))
-    for (const c of (r.c.length ? r.c : ['']))
-      lines.push([r.d, r.t, q(r.name), q(c)].join(','));
-  return lines.join('\r\n') + '\r\n';
-}
-const csvText = (db, from, to) => csvOf(db, db.checkins.filter((r) => r.d >= from && r.d <= to));
-
 // --- pulls ---
 const daysBetween = (a, b) => Math.round((Date.parse(b + 'T12:00:00') - Date.parse(a + 'T12:00:00')) / 864e5);
 
@@ -226,7 +236,7 @@ function waiting(db, today) {
 }
 
 // The pull as the iPad will look after it, without touching `db`: the caller saves `next` only
-// once the spreadsheet has been shared.
+// once the PDF of `recs` has been shared.
 function pullDraft(db, now) {
   const at = now.toISOString();
   const next = JSON.parse(JSON.stringify(db));
@@ -235,7 +245,7 @@ function pullDraft(db, now) {
   const days = recs.map((r) => r.d).sort();
   recs.forEach((r) => { r.p = at; });
   next.pulls.push({ at, n: recs.length, from: days[0], to: days[days.length - 1] });
-  return { at, next, csv: csvOf(next, recs) };
+  return { at, next, recs, title: rangeTitle(days[0], days[days.length - 1]) };
 }
 
 const backupText = (db, now) => JSON.stringify(Object.assign({}, db, { dirty: false, exportedAt: now.toISOString() }));
@@ -349,7 +359,9 @@ function el(tag, props, ...kids) {
   return n;
 }
 const btn = (label, cls, onclick) => el('button', { className: cls || '', onclick }, label);
+let homeAt = null; // the day and half the name screen was drawn for; null when it isn't showing
 function show(...nodes) {
+  homeAt = null;
   clearTimeout(timer);
   document.body.className = '';
   app.replaceChildren(...nodes.filter((n) => n != null));
@@ -368,8 +380,8 @@ const count = (n) => n + (n === 1 ? ' check-in' : ' check-ins');
 const nice = (day) => new Date(day + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 function home() {
-  const today = dayOf(new Date());
-  const here = new Set(db.checkins.filter((r) => r.d === today).map((r) => r.s));
+  const today = dayOf(new Date()), now = half(timeOf(new Date()));
+  const here = new Set(db.checkins.filter((r) => r.d === today && half(r.t) === now).map((r) => r.s));
   const all = active();
   const initials = [...new Set(all.map((id) => db.students[id].name[0].toUpperCase()))];
   if (letter && !initials.includes(letter)) letter = null;
@@ -402,7 +414,10 @@ function home() {
   if (multi) app.querySelector('.go').disabled = !sel.size;
   rearm = null;
   if (multi || letter) after(IDLE, reset);
+  homeAt = today + now;
 }
+// Redraw the name screen at noon and midnight, so old ✓ marks don't sit there until someone taps.
+setInterval(() => { if (homeAt && homeAt !== dayOf(new Date()) + half(timeOf(new Date()))) home(); }, 60000);
 function reset() { multi = false; sel.clear(); letter = null; home(); }
 
 function notSaved() {
@@ -434,11 +449,15 @@ function newStudent() {
 
 function pick(ids) {
   if (!db.classes.length) return finish(ids, []);
-  // Start from what this student picked last time: a regular is one tap from done.
+  // Start from what this student picked last time: a regular is one tap from done. Classes they
+  // are already checked into today show a ✓ and can't be picked again.
+  const today = dayOf(new Date());
+  const done = new Set(ids.length === 1 ? db.checkins.filter((r) => r.s === ids[0] && r.d === today).flatMap((r) => r.c) : []);
   const last = ids.length === 1 ? (db.students[ids[0]].last || []) : [];
-  const chosen = new Set(last.filter((c) => db.classes.includes(c)));
+  const chosen = new Set(last.filter((c) => db.classes.includes(c) && !done.has(c)));
   const go = btn('Check in', 'go', () => finish(ids, db.classes.filter((c) => chosen.has(c))));
   const grid = el('div', { className: 'grid classes' }, ...db.classes.map((c) => {
+    if (done.has(c)) { const d = btn(c + ' ✓', 'done'); d.disabled = true; return d; }
     const b = btn(c, chosen.has(c) ? 'sel' : '', () => {
       chosen.has(c) ? chosen.delete(c) : chosen.add(c);
       b.className = chosen.has(c) ? 'sel' : '';
@@ -507,7 +526,9 @@ async function shareFiles(files) {
   for (const f of files) el('a', { href: URL.createObjectURL(f), download: f.name }).click();
   return confirm(files.length > 1 ? 'Did all ' + files.length + ' files save?' : 'Did the file save?');
 }
-const csvFile = (text, name) => new File([text], name + '.csv', { type: 'text/csv' });
+// One character is one byte in pdfRoster's output, which is what its offsets assume.
+const pdfFile = (recs, title, name) => new File([Uint8Array.from(pdfRoster(db, recs, title, atob(LOGO_JPEG)), (ch) => ch.charCodeAt(0))],
+  name + '.pdf', { type: 'application/pdf' });
 const jsonFile = (text, name) => new File([text], name + '.json', { type: 'application/json' });
 
 function usedChars() {
@@ -546,7 +567,7 @@ function coach(day) {
       const draft = pullDraft(db, new Date());
       if (!draft) return;
       hold();
-      if (!await shareFiles([csvFile(draft.csv, stamp)])) alert('Not pulled. Nothing was marked.');
+      if (!await shareFiles([pdfFile(draft.recs, draft.title, stamp)])) alert('Not pulled. Nothing was marked.');
       else if (!commit(() => draft.next)) alert("Shared, but couldn't mark these as pulled. The next pull will include them again.");
       else backupNudge = true;
     } catch (e) { alert('Pull failed: ' + e.message + '. Tell Wyatt.'); }
@@ -600,24 +621,22 @@ function coach(day) {
           : 'Nothing waiting. Everything has been pulled.'),
         pullBtn),
       backupNudge ? el('div', { className: 'warn row' }, el('span', { className: 'grow' }, 'Pulled. Now save a backup too.'), btn('Back up now', 'go', backupNow)) : null,
-      el('p', { className: 'sub' }, 'Pull shares a spreadsheet of everything waiting and marks it pulled. Then Back up now. Every week or two.'),
+      el('p', { className: 'sub' }, 'Pull shares a PDF of everything waiting, by day and class, and marks it pulled. Then Back up now. Every week or two.'),
       ...db.pulls.slice(-8).reverse().map((p) => {
         const left = db.checkins.filter((r) => r.p === p.at);
         return el('div', { className: 'row' },
           el('span', { className: 'grow' }, 'Pulled ' + new Date(p.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
             + ': ' + nice(p.from) + (p.to !== p.from ? ' to ' + nice(p.to) : '') + ', ' + count(p.n)
             + (left.length && left.length < p.n ? ' (' + left.length + ' still on this iPad)' : '')),
-          left.length ? btn('Share CSV again', 'small', () => {
-            hold(); shareFiles([csvFile(csvOf(db, left), 'asylum-attendance-pulled-' + p.at.slice(0, 10))]).then(again);
+          left.length ? btn('Share PDF again', 'small', () => {
+            hold(); shareFiles([pdfFile(left, rangeTitle(p.from, p.to), 'asylum-attendance-pulled-' + p.at.slice(0, 10))]).then(again);
           }) : null);
       })),
 
     el('section', {}, el('h3', {}, 'Roster'),
       el('div', { className: 'row' }, dayIn, dayTag ? el('span', { className: 'tag' }, dayTag) : null,
         btn('Share PDF', 'go push', () => {
-          // One character is one byte in pdfRoster's output, which is what its offsets assume.
-          const bytes = Uint8Array.from(pdfRoster(db, day, atob(LOGO_JPEG)), (ch) => ch.charCodeAt(0));
-          hold(); shareFiles([new File([bytes], 'asylum-attendance-' + day + '.pdf', { type: 'application/pdf' })]).then(again);
+          hold(); shareFiles([pdfFile(dayRecs.map((x) => x.r), longDate(day), 'asylum-attendance-' + day)]).then(again);
         })),
       el('pre', {}, text),
       dayRecs.length ? el('details', {}, el('summary', {}, 'Delete a check-in'),
@@ -629,10 +648,11 @@ function coach(day) {
             again();
           })))) : null),
 
-    el('section', {}, el('h3', {}, 'Spreadsheet'),
+    el('section', {}, el('h3', {}, 'Date range'),
       el('div', { className: 'row' }, from, 'to', to,
-        btn('Share spreadsheet', '', () => {
-          hold(); shareFiles([csvFile(csvText(db, from.value, to.value), 'asylum-attendance-' + from.value + '-to-' + to.value)]).then(again);
+        btn('Share PDF', '', () => {
+          const f = from.value, t = to.value < from.value ? from.value : to.value;
+          hold(); shareFiles([pdfFile(db.checkins.filter((r) => r.d >= f && r.d <= t), rangeTitle(f, t), 'asylum-attendance-' + f + '-to-' + t)]).then(again);
         })),
       el('p', { className: 'sub' }, 'Any dates. This does not mark anything as pulled.')),
 

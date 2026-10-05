@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const src = html.split('// --- logic ---')[1].split('// --- ui ---')[0];
-const { fresh, addStudent, checkIn, rosterText, csvText, pdfRoster, dayOf, waiting, pullDraft, backupText, readBackup, persist, KEY, RESERVE } =
-  new Function(src + '; return { fresh, addStudent, checkIn, rosterText, csvText, pdfRoster, dayOf, waiting, pullDraft, backupText, readBackup, persist, KEY, RESERVE };')();
+const { fresh, addStudent, checkIn, rosterText, pdfRoster, rangeTitle, dayOf, waiting, pullDraft, backupText, readBackup, persist, KEY, RESERVE } =
+  new Function(src + '; return { fresh, addStudent, checkIn, rosterText, pdfRoster, rangeTitle, dayOf, waiting, pullDraft, backupText, readBackup, persist, KEY, RESERVE };')();
 
 const db = fresh();
 const ann = addStudent(db, '  ann   lee ');
@@ -17,22 +17,19 @@ const at = new Date(2026, 9, 2, 18, 5); // local 6:05pm, Oct 2
 assert.equal(dayOf(new Date(2026, 9, 2, 23, 59)), '2026-10-02', 'late class stays on its own day');
 checkIn(db, [ann, bo], ['MMA'], at);
 checkIn(db, [ann], ['MMA', 'Wrestling'], new Date(2026, 9, 2, 19, 0));
-assert.equal(db.checkins.length, 2, 'second check-in the same day merges');
-assert.deepEqual(db.checkins[0].c, ['MMA', 'Wrestling']);
-assert.equal(db.checkins[0].t, '18:05', 'keeps the first arrival time');
+assert.equal(db.checkins.length, 3, 'a later check-in is its own record');
+assert.deepEqual(db.checkins[0].c, ['MMA'], 'the first record is unchanged');
+assert.deepEqual(db.checkins[2], { s: ann, d: '2026-10-02', t: '19:00', c: ['Wrestling'] }, 'only the new class, at its own time');
 assert.deepEqual(db.students[ann].last, ['MMA', 'Wrestling']);
 
 const text = rosterText(db, '2026-10-02');
 assert.match(text, /2 checked in/);
 assert.match(text, /MMA \(2\)/);
 assert.match(text, /ann lee  6:05 PM/);
-assert.match(text, /Wrestling \(1\)/);
+assert.match(text, /Wrestling \(1\)\n  ann lee  7:00 PM/, 'each class shows its own time');
 assert.doesNotMatch(text, /Kickboxing/, 'empty classes are left out');
 assert.match(rosterText(db, '2026-10-03'), /0 checked in/);
 
-const csv = csvText(db, '2026-10-01', '2026-10-31').trim().split('\r\n');
-assert.equal(csv.length, 4, 'header + one row per student per class');
-assert.ok(csv.includes('2026-10-02,18:05,"\'=Bo ""B"" Diaz","MMA"'), 'quotes escaped, formula defused');
 
 const checkPdf = (pdf) => {
   const offsets = [...pdf.split('xref\n0 ')[1].matchAll(/(\d{10}) 00000 n/g)].map((m) => +m[1]);
@@ -40,17 +37,27 @@ const checkPdf = (pdf) => {
   assert.equal(+pdf.match(/startxref\n(\d+)/)[1], pdf.lastIndexOf('xref\n0 '));
   return pdf.match(/\/Type \/Page /g).length;
 };
-const pdf = pdfRoster(db, '2026-10-02', 'FAKEJPEG');
+const oct2 = db.checkins.filter((r) => r.d === '2026-10-02');
+const pdf = pdfRoster(db, oct2, rangeTitle('2026-10-02', '2026-10-02'), 'FAKEJPEG');
+assert.ok(pdf.includes('(Friday, October 2, 2026) Tj') && pdf.includes('(checked in) Tj'), 'one day: date and checked in');
+assert.ok(!pdf.includes('(check-ins) Tj'));
 assert.ok(pdf.startsWith('%PDF-1.4') && pdf.includes('(ann lee) Tj') && pdf.includes('(6:05 PM) Tj') && pdf.includes('(=Bo "B" Diaz) Tj'));
 assert.ok(pdf.includes('/Length 8 >>\nstream\nFAKEJPEG') && pdf.includes('/Im1 Do'));
 assert.equal(checkPdf(pdf), 1);
-assert.ok(!pdfRoster(db, '2026-10-02').includes('/Im1 Do'), 'no logo, no image drawn');
-assert.equal(checkPdf(pdfRoster(db, '2026-10-03')), 1, 'an empty day is still a valid page');
+assert.ok(!pdfRoster(db, oct2, 'x').includes('/Im1 Do'), 'no logo, no image drawn');
+assert.equal(checkPdf(pdfRoster(db, [], 'Saturday, October 3, 2026')), 1, 'an empty day is still a valid page');
+checkIn(db, [bo], ['MMA'], new Date(2026, 9, 3, 18, 0));
+const range = pdfRoster(db, db.checkins, rangeTitle('2026-10-02', '2026-10-03'), 'FAKEJPEG');
+assert.equal(checkPdf(range), 1);
+assert.ok(range.includes('(Oct 2 to Oct 3, 2026) Tj'), 'range title');
+assert.ok(range.includes('(Saturday, October 3, 2026) Tj') && range.includes('(check-ins) Tj'), 'a heading per day');
+assert.match(range, /BT \/F2 30 Tf [\d.]+ 698 Td \(3\) Tj/, 'total counts each student once per day');
+assert.equal(rangeTitle('2025-12-29', '2026-01-02'), 'Dec 29, 2025 to Jan 2, 2026');
 
 const big = fresh();
 const crowd = Array.from({ length: 80 }, (_, i) => addStudent(big, 'Student (' + i + ')'));
 checkIn(big, crowd, ['MMA'], at);
-const long = pdfRoster(big, '2026-10-02');
+const long = pdfRoster(big, big.checkins, 'Friday, October 2, 2026');
 assert.equal(checkPdf(long), 3, '80 names run onto three pages');
 assert.ok(long.includes('Page 3 of 3') && long.includes('(Student \\(7\\)) Tj'), 'pages numbered, parentheses escaped');
 
@@ -67,7 +74,8 @@ assert.deepEqual(waiting(p, '2026-10-19'), { n: 1, from: '2026-10-05', to: '2026
 assert.equal(waiting(p, '2026-10-01').age, 0, 'a future-dated record is not negative age');
 const draft = pullDraft(p, new Date(2026, 9, 5, 12, 0));
 assert.ok(!p.checkins[0].p && p.pulls.length === 0 && p.dirty === false, 'the draft never touches the live db');
-assert.equal(draft.csv.trim().split('\r\n').length, 2);
+assert.equal(draft.recs.length, 1);
+assert.equal(draft.title, 'Monday, October 5, 2026');
 assert.equal(draft.next.checkins[0].p, draft.at);
 assert.equal(waiting(draft.next, '2026-10-05'), null);
 assert.equal(pullDraft(draft.next, new Date()), null, 'nothing waiting, nothing to pull');
@@ -79,10 +87,10 @@ assert.equal(q.checkins.length, 2, 'a new class after a pull is a new record');
 assert.deepEqual(q.checkins[0].c, ['Morning Jiu-Jitsu'], 'the pulled record is unchanged');
 assert.deepEqual(q.checkins[1].c, ['MMA']);
 checkIn(q, [cy], ['Adult Jiu-Jitsu', 'MMA'], new Date(2026, 9, 5, 19, 0));
-assert.equal(q.checkins.length, 2, 'a third check-in merges into the unpulled record');
-assert.deepEqual(q.checkins[1].c, ['MMA', 'Adult Jiu-Jitsu']);
-assert.match(rosterText(q, '2026-10-05'), /1 checked in/, 'two records, one student');
-assert.equal(waiting(q, '2026-10-05').n, 1);
+assert.equal(q.checkins.length, 3, 'a third check-in is its own record');
+assert.deepEqual(q.checkins[2].c, ['Adult Jiu-Jitsu']);
+assert.match(rosterText(q, '2026-10-05'), /1 checked in/, 'three records, one student');
+assert.equal(waiting(q, '2026-10-05').n, 2);
 
 // --- backups ---
 const back = readBackup(backupText(q, new Date(2026, 9, 5, 20, 0)));
