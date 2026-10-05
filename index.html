@@ -226,7 +226,7 @@ function waiting(db, today) {
 }
 
 // The pull as the iPad will look after it, without touching `db`: the caller saves `next` only
-// once the files have been shared. The backup is of `next`, so restoring it never re-pulls.
+// once the spreadsheet has been shared.
 function pullDraft(db, now) {
   const at = now.toISOString();
   const next = JSON.parse(JSON.stringify(db));
@@ -235,8 +235,7 @@ function pullDraft(db, now) {
   const days = recs.map((r) => r.d).sort();
   recs.forEach((r) => { r.p = at; });
   next.pulls.push({ at, n: recs.length, from: days[0], to: days[days.length - 1] });
-  next.dirty = false;
-  return { at, next, csv: csvOf(next, recs), json: backupText(next, now) };
+  return { at, next, csv: csvOf(next, recs) };
 }
 
 const backupText = (db, now) => JSON.stringify(Object.assign({}, db, { dirty: false, exportedAt: now.toISOString() }));
@@ -473,6 +472,7 @@ function finish(ids, classes) {
   timer = setTimeout(reset, 5000);
 }
 
+let backupNudge = false; // set by a pull, cleared by the next backup
 let pinMisses = 0, pinLockedUntil = 0;
 function coachGate() {
   let pin = null;
@@ -498,9 +498,11 @@ function setPin(first) {
 
 // Hands files to the iPad share sheet (AirDrop, Mail, Messages, Save to Files). True only when the
 // share went through. With no share sheet (a desktop browser) it downloads them and asks.
+// One file per call: the iPad opened nothing for a two-file share (Wyatt's test, 2026-10-05).
 async function shareFiles(files) {
   if (navigator.canShare && navigator.canShare({ files })) {
-    try { await navigator.share({ files }); return true; } catch (e) { return false; }
+    try { await navigator.share({ files }); return true; }
+    catch (e) { if (e.name !== 'AbortError') alert('The share sheet did not open (' + e.name + '). Tell Wyatt.'); return false; }
   }
   for (const f of files) el('a', { href: URL.createObjectURL(f), download: f.name }).click();
   return confirm(files.length > 1 ? 'Did all ' + files.length + ' files save?' : 'Did the file save?');
@@ -540,16 +542,24 @@ function coach(day) {
   const stamp = 'asylum-attendance-' + today;
 
   const pullBtn = btn('Pull', 'go', async () => {
-    const draft = pullDraft(db, new Date());
-    if (!draft) return;
-    hold();
-    if (!await shareFiles([csvFile(draft.csv, stamp), jsonFile(draft.json, 'asylum-backup-' + today)])) {
-      alert('Not pulled. Nothing was marked.');
-    } else if (!commit(() => draft.next, true)) {
-      alert("Shared, but couldn't mark these as pulled. The next pull will include them again.");
-    }
+    try {
+      const draft = pullDraft(db, new Date());
+      if (!draft) return;
+      hold();
+      if (!await shareFiles([csvFile(draft.csv, stamp)])) alert('Not pulled. Nothing was marked.');
+      else if (!commit(() => draft.next)) alert("Shared, but couldn't mark these as pulled. The next pull will include them again.");
+      else backupNudge = true;
+    } catch (e) { alert('Pull failed: ' + e.message + '. Tell Wyatt.'); }
     again();
   });
+  const backupNow = async () => {
+    hold();
+    if (await shareFiles([jsonFile(backupText(db, new Date()), 'asylum-backup-' + today)])) {
+      if (commit(() => {}, true)) backupNudge = false;
+      else alert("Backed up, but couldn't record it.");
+    }
+    again();
+  };
   pullBtn.disabled = !w;
 
   const restoreIn = el('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: async () => {
@@ -589,7 +599,8 @@ function coach(day) {
             + (w.age ? ' (oldest ' + w.age + (w.age === 1 ? ' day)' : ' days)') : '')
           : 'Nothing waiting. Everything has been pulled.'),
         pullBtn),
-      el('p', { className: 'sub' }, 'Pull shares a spreadsheet of everything waiting, plus a backup file. Save both. Pull every week or two.'),
+      backupNudge ? el('div', { className: 'warn row' }, el('span', { className: 'grow' }, 'Pulled. Now save a backup too.'), btn('Back up now', 'go', backupNow)) : null,
+      el('p', { className: 'sub' }, 'Pull shares a spreadsheet of everything waiting and marks it pulled. Then Back up now. Every week or two.'),
       ...db.pulls.slice(-8).reverse().map((p) => {
         const left = db.checkins.filter((r) => r.p === p.at);
         return el('div', { className: 'row' },
@@ -628,12 +639,7 @@ function coach(day) {
     el('section', {}, el('h3', {}, 'Backup'),
       el('p', {}, db.dirty === false ? 'Everything on this iPad is in a backup file.' : 'Changed since the last backup.'),
       el('div', { className: 'row' },
-        btn('Back up now', '', async () => {
-          hold();
-          if (await shareFiles([jsonFile(backupText(db, new Date()), 'asylum-backup-' + today)])
-            && !commit(() => {}, true)) alert("Backed up, but couldn't record it.");
-          again();
-        }),
+        btn('Back up now', '', backupNow),
         (() => { const b = btn('Restore from backup', '', () => restoreIn.click()); b.disabled = !canRestore; return b; })(),
         restoreIn),
       el('p', { className: 'sub' }, canRestore
