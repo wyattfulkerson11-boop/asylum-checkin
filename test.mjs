@@ -148,4 +148,21 @@ assert.equal(persist(full(10), one), null, 'nothing left to free: refused');
 const denied = { getItem: () => null, removeItem() {}, setItem() { throw Object.assign(new Error('no'), { name: 'SecurityError' }); } };
 assert.equal(persist(denied, pulled), null, 'not a quota error: no pruning');
 
+// sw.js: an error page from GitHub falls back to the cached copy.
+{
+  const on = {}, store = new Map();
+  const cache = { put: async (k, v) => store.set(k, v), match: async (k) => store.get(k) };
+  const swSelf = { addEventListener: (t, f) => (on[t] = f) };
+  let reply;
+  new Function('self', 'caches', 'fetch', readFileSync(new URL('./sw.js', import.meta.url), 'utf8'))(
+    swSelf, { open: async () => cache }, async () => reply);
+  const nav = async () => { let p; on.fetch({ request: { mode: 'navigate' }, respondWith: (x) => (p = x) }); return p; };
+  reply = { ok: true, status: 200, clone() { return this; } };
+  assert.equal((await nav()).status, 200, 'a good page is served and cached');
+  reply = { ok: false, status: 404 };
+  assert.equal((await nav()).status, 200, 'a 404 serves the cached copy');
+  store.clear();
+  assert.equal((await nav()).status, 404, 'nothing cached: the error page is all there is');
+}
+
 console.log('checkin: ok');

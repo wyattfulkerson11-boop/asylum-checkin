@@ -16,8 +16,9 @@ self.addEventListener('fetch', (e) => {
         fetch(e.request),
         new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 3000)),
       ]);
-      if (fresh.ok) await cache.put('./', fresh.clone());
-      return fresh;
+      if (fresh.ok) { await cache.put('./', fresh.clone()); return fresh; }
+      // A 404 or 5xx from GitHub is worse than yesterday's copy: the data is fine underneath.
+      return (await cache.match('./')) || fresh;
     } catch (err) {
       return (await cache.match('./')) || Response.error();
     }
